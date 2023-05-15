@@ -164,7 +164,8 @@ class ColmapDatasetBase():
                 img = img.resize(self.img_wh, Image.BICUBIC)
                 img = TF.to_tensor(img).permute(1, 2, 0)[...,:3]
                 if self.use_mask:
-                    mask_paths = [os.path.join(mask_dir, d.name), os.path.join(mask_dir, d.name[3:])]
+                    # mask_paths = [os.path.join(mask_dir, d.name), os.path.join(mask_dir, d.name[3:])]
+                    mask_paths = [os.path.join(mask_dir, d.name[:-3] + "png")]
                     mask_paths = list(filter(os.path.exists, mask_paths))
                     assert len(mask_paths) == 1
                     mask = Image.open(mask_paths[0]).convert('L') # (H, W, 1)
