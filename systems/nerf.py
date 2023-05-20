@@ -191,7 +191,28 @@ class NeRFSystem(BaseSystem):
                     for oi, index in enumerate(step_out['index']):
                         out_set[index[0].item()] = {'psnr': step_out['psnr'][oi]}
             psnr = torch.mean(torch.stack([o['psnr'] for o in out_set.values()]))
-            self.log('test/psnr', psnr, prog_bar=True, rank_zero_only=True)    
+            self.log('test/psnr', psnr, prog_bar=True, rank_zero_only=True)
+
+            psnr_min = torch.min(torch.stack([o['psnr'] for o in out_set.values()]))
+            psnr_max = torch.max(torch.stack([o['psnr'] for o in out_set.values()]))
+            psnr_std = torch.std(torch.stack([o['psnr'] for o in out_set.values()]))
+            self.log('test/psnr/min', psnr_min, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/max', psnr_max, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/std', psnr_std, prog_bar=True, rank_zero_only=True)
+
+            psnr_90 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .90)
+            psnr_95 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .95)
+            psnr_99 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .99)
+            self.log('test/psnr/perc90', psnr_90, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/perc95', psnr_95, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/perc99', psnr_99, prog_bar=True, rank_zero_only=True)
+
+            psnr_1 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .01)
+            psnr_5 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .05)
+            psnr_10 = torch.quantile(torch.stack([o['psnr'] for o in out_set.values()]), .1)
+            self.log('test/psnr/perc1', psnr_1, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/perc5', psnr_5, prog_bar=True, rank_zero_only=True)
+            self.log('test/psnr/perc10', psnr_10, prog_bar=True, rank_zero_only=True)
 
             self.save_img_sequence(
                 f"it{self.global_step}-test",
