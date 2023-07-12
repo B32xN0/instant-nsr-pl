@@ -1,16 +1,16 @@
 name: nerf-colmap-${basename:${dataset.root_dir}}
-tag: ''
+tag: ""
 seed: 42
 
 dataset:
   name: colmap
-  scene: ???
-  root_dir: ./load/unbounded360/${dataset.scene}
+  root_dir: ./load/unbounded360/garden
   img_downscale: 4 # specify training image size by either img_wh or img_downscale
-  estimate_ground: true # if true, use estimated ground plane normal direction as up direction
-  use_mask: false # if true, crop out the foreground region; only effective when root_dir/masks folder exists    
-  use_pixel_centers: true
+  up_est_method: ground # if true, use estimated ground plane normal direction as up direction
+  center_est_method: lookat
   n_test_traj_steps: 120
+  apply_mask: false
+  load_data_on_gpu: false
 
 model:
   name: nerf
@@ -42,7 +42,7 @@ model:
       n_features_per_level: 2
       log2_hashmap_size: 19
       base_resolution: 16
-      per_level_scale: 1.447269237440378  
+      per_level_scale: 1.447269237440378
     mlp_network_config:
       otype: FullyFusedMLP
       activation: ReLU
@@ -54,21 +54,21 @@ model:
     input_feature_dim: ${model.geometry.feature_dim}
     dir_encoding_config:
       otype: SphericalHarmonics
-      degree: 4    
+      degree: 4
     mlp_network_config:
       otype: FullyFusedMLP
       activation: ReLU
       output_activation: Sigmoid
       n_neurons: 64
       n_hidden_layers: 2
-  
+
 system:
   name: nerf-system
   loss:
     lambda_rgb: 1.
     lambda_distortion: 0.001
   optimizer:
-    name: Adam
+    name: AdamW
     args:
       lr: 0.01
       betas: [0.9, 0.99]
@@ -84,6 +84,10 @@ checkpoint:
   save_top_k: -1
   every_n_train_steps: ${trainer.max_steps}
 
+export:
+  chunk_size: 2097152
+  export_vertex_color: False
+
 trainer:
   max_steps: 20000
   log_every_n_steps: 200
@@ -91,5 +95,5 @@ trainer:
   val_check_interval: 5000
   limit_train_batches: 1.0
   limit_val_batches: 2
-  enable_progress_bar: true 
+  enable_progress_bar: true
   precision: 16

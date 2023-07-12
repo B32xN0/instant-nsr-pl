@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 import models
 from models.base import BaseModel
@@ -42,7 +43,7 @@ class NeRFModel(BaseModel):
         self.background_color = None
     
     def update_step(self, epoch, global_step):
-        # progressive viewdir PE frequencies
+        update_module_step(self.geometry, epoch, global_step)
         update_module_step(self.texture, epoch, global_step)
 
         def occ_eval_fn(x):
@@ -107,8 +108,6 @@ class NeRFModel(BaseModel):
         comp_rgb = accumulate_along_rays(weights, ray_indices, values=rgb, n_rays=n_rays)
         comp_rgb = comp_rgb + self.background_color * (1.0 - opacity)       
 
-        opacity, depth = opacity.squeeze(-1), depth.squeeze(-1)
-
         out = {
             'comp_rgb': comp_rgb,
             'opacity': opacity,
@@ -131,7 +130,7 @@ class NeRFModel(BaseModel):
         if self.training:
             out = self.forward_(rays)
         else:
-            out = chunk_batch(self.forward_, self.config.ray_chunk, rays)
+            out = chunk_batch(self.forward_, self.config.ray_chunk, True, rays)
         return {
             **out,
         }
@@ -150,3 +149,13 @@ class NeRFModel(BaseModel):
         losses.update(self.texture.regularizations(out))
         return losses
 
+    @torch.no_grad()
+    def export(self, export_config):
+        mesh = self.isosurface()
+        if export_config.export_vertex_color:
+            _, feature = chunk_batch(self.geometry, export_config.chunk_size, False, mesh['v_pos'].to(self.rank))
+            viewdirs = torch.zeros(feature.shape[0], 3).to(feature)
+            viewdirs[...,2] = -1. # set the viewing directions to be -z (looking down)
+            rgb = self.texture(feature, viewdirs).clamp(0,1)
+            mesh['v_rgb'] = rgb.cpu()
+        return mesh
