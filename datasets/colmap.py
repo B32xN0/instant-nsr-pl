@@ -188,7 +188,7 @@ class ColmapDatasetBase():
                 if self.split in ['train', 'val']:
                     img_path = os.path.join(self.config.root_dir, 'images', d.name)
                     img = Image.open(img_path)
-                    img = img.resize(self.img_wh, Image.BICUBIC)
+                    img = img.resize(self.config.img_wh, Image.BICUBIC)
                     img = TF.to_tensor(img).permute(1, 2, 0)[...,:3]
                     img = img.to(self.rank) if self.config.load_data_on_gpu else img.cpu()
                     if has_mask:
@@ -197,14 +197,14 @@ class ColmapDatasetBase():
                         mask_paths = list(filter(os.path.exists, mask_paths))
                         assert len(mask_paths) == 1
                         mask = Image.open(mask_paths[0]).convert('L') # (H, W, 1)
-                        mask = mask.resize(self.img_wh, Image.BICUBIC)
+                        mask = mask.resize(self.config.img_wh, Image.BICUBIC)
                         mask = TF.to_tensor(mask)[0]
                     else:
                         mask = torch.ones_like(img[...,0], device=img.device)
                     all_fg_masks.append(mask) # (h, w)
                     all_images.append(img)
 
-            all_c2w = torch.stack(self.all_c2w, dim=0)
+            all_c2w = torch.stack(all_c2w, dim=0)
 
             pts3d = read_points3d_binary(os.path.join(self.config.root_dir, 'sparse/0/points3D.bin'))
             pts3d = torch.from_numpy(np.array([pts3d[k].xyz for k in pts3d])).float()

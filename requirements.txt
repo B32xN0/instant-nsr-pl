@@ -11,3 +11,4 @@ PyMCubes
 pyransac3d
 torch_efficient_distloss
 torchmetrics==0.7.0
+trimesh
