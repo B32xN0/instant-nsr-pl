@@ -1,5 +1,5 @@
-pytorch-lightning==1.7.7
-# pytorch-lightning<2
+# pytorch-lightning==1.7.7
+pytorch-lightning<2
 omegaconf==2.2.3
 nerfacc==0.3.3
 matplotlib
@@ -12,3 +12,4 @@ pyransac3d
 torch_efficient_distloss
 trimesh
 tensorboard
+torchmetrics==0.7.0
