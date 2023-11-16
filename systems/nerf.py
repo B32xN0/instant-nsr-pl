@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,6 +20,7 @@ ROBNERF_PATCH_N = 16
 ROBNERF_PATCH_SIZE = 16
 ROBNERF_PATCH_SIZE_2 = ROBNERF_PATCH_SIZE * ROBNERF_PATCH_SIZE
 ROBNERF_PATCH_SIZE_HALF = int(ROBNERF_PATCH_SIZE / 2)
+ROBNERF_INNER_PATCH_SIZE = 8
 
 @systems.register('nerf-system')
 class NeRFSystem(BaseSystem):
@@ -121,8 +124,9 @@ class NeRFSystem(BaseSystem):
                     # only every about 200 iterations this does not happen naturally through the random sampling
                     # so this hardly has an effect at all
                     # if anything this makes the optimization easier for robust nerf, so we definitely stay scientific
-                    if not self.dataset.all_fg_masks[index, y, x].sum() == 0:
-                        valid = True
+                    # if not self.dataset.all_fg_masks[index, y, x].sum() == 0:
+                    #     valid = True
+                    valid=True
 
             else:
                 x = torch.randint(
@@ -176,30 +180,88 @@ class NeRFSystem(BaseSystem):
 
         # update train_num_rays
         if "robust_loss" in self.config.system.loss and self.config.system.loss.robust_loss:
+            # Sometime no ray ends up being valid
+            # due to the sparse sampling of the patches compared to the dense uniform sampling with rays
+            # and also the resulting more biased updates of the occupancy grid
+            self.log('train/occupancy', torch.count_nonzero(out['rays_valid'][..., 0]), prog_bar=True)
             if torch.count_nonzero(out['rays_valid'][..., 0]) == 0:
-                print("No valid ray", flush=True)
+                # print("No valid ray", flush=True)
                 return None
 
-            loss_rgb = F.mse_loss(out['comp_rgb'][out['rays_valid'][..., 0]],
-                                  batch['rgb'][out['rays_valid'][..., 0]])
+            with torch.no_grad():
+                # get the L2 errors for all occupied pixels (Euclidean of color differences)
+                # set the error to zero for all unoccupied pixels
+                # TODO check that probably we want squared, does not change anything but might introduce numerical instability due to the unneccssary root
+                pp_valid_error = torch.linalg.vector_norm(
+                    out['comp_rgb'][out['rays_valid'][..., 0]] - batch['rgb'][out['rays_valid'][..., 0]],
+                    dim=-1,
+                    ord=2
+                )
+
+                dtype = out['comp_rgb'].dtype
+                device = out['comp_rgb'].device
+                pp_error = torch.zeros(size=(out['comp_rgb'].shape[0],), dtype=dtype, device=device)
+
+                pp_error[out['rays_valid'][..., 0]] = pp_valid_error
+
+                # take the median as inlier threshold as mentioned in RonustNeRF
+                # only use the occupied pixels to compute the threshold (otherwise it would always be too low)
+                # use a higher threshold than median, otherwise RobustNeRF just fits the background
+                threshold = torch.quantile(pp_valid_error, q=0.8)
+
+                # obtain inlier mask by applying the defined threshold
+                # lt OR EQUAL plus eps to make sure at least one occupied is selected in the end, minor change compared to robustnerf
+                pp_inlier = pp_error < threshold
+                self.log('train/ppinlier', torch.count_nonzero(pp_inlier), prog_bar=True)
+
+                # transform back to original shape
+                # recover from flattened(N, H, W)
+                # and introduce singleton dimension for channels for next operation
+                recovered = torch.unflatten(pp_inlier, dim=0,
+                                            sizes=(ROBNERF_PATCH_N, 1, ROBNERF_PATCH_SIZE, ROBNERF_PATCH_SIZE)
+                                            ).type(dtype)
+
+                # smooth obtained mask with 3x3 box filter
+                kernel = torch.ones((1, 1, 3, 3), device=device, dtype=dtype) / 9.
+                sm_inlier = torch.nn.functional.conv2d(recovered, kernel, padding='same')
+
+                # rebinarize with neighbourhood threshold (0.5)
+                b_sm_inlier = sm_inlier > 0.5
+                b_sm_inlier = b_sm_inlier.flatten()
+                self.log('train/sminlier', torch.count_nonzero(b_sm_inlier), prog_bar=True)
+
+                # for every of the patches(16x16) compute the average
+                # if above threshold (0.6), label the inner part (8x8) of the patch as inlier
+                # TODO WATCH OUT:
+                # In the paper they compute the patch loss based on the smoothed mask from the previous step
+                # In their published source code, however, they compute it based on the original per pixel mask
+                # We stick to what they use in their published source code
+                patch_inlier = torch.mean(recovered, dim=[1, 2, 3])
+                b_patch_inlier = patch_inlier > 0.6
+
+                # recover shape and apply to inner 8x8 of patch
+                inner_offset = int((ROBNERF_PATCH_SIZE - ROBNERF_INNER_PATCH_SIZE) / 2)
+                stop_position = ROBNERF_INNER_PATCH_SIZE + inner_offset - 1
+
+                patch_inlier_mask = torch.zeros_like(recovered, dtype=torch.bool)
+                patch_inlier_mask[b_patch_inlier, 0, inner_offset:stop_position, inner_offset:stop_position] = True
+                patch_inlier_mask = patch_inlier_mask.flatten()
+                self.log('train/pchinlier', torch.count_nonzero(patch_inlier_mask), prog_bar=True)
+
+                # sum all masks to obtain final mask
+                # make boolean or something and just and ?
+                final_mask = torch.logical_or(pp_inlier, b_sm_inlier)
+                final_mask = torch.logical_or(final_mask, patch_inlier_mask)
+                self.log('train/inlier', torch.count_nonzero(final_mask), prog_bar=True)
+
+                combined_with_occupancy = torch.logical_and(final_mask, out['rays_valid'][..., 0])
+                self.log('train/totalil', torch.count_nonzero(combined_with_occupancy), prog_bar=True)
+
+            loss_rgb = F.mse_loss(out['comp_rgb'][combined_with_occupancy],
+                                  batch['rgb'][combined_with_occupancy])
 
             # TODO problem combination of rays valid and robust nerf mask can lead to no ray valid
             # TODO in general the sampling of patches is very much not compatible with the occupancy grid technique
-            # loss_rgb = F.mse_loss(out['comp_rgb'], batch['rgb'])
-
-            if loss_rgb == 0.:
-                print("Loss is zero", flush=True)
-
-
-            # difference = out['comp_rgb'][out['rays_valid'][...,0]] - batch['rgb'][out['rays_valid'][...,0]]
-            # if "l2_loss" in self.config.system.loss and self.config.system.loss.l2_loss:
-            #     per_pixel_error = torch.linalg.vector_norm(difference, dim=-1, ord=2)
-            # else:
-            #     TODO smoothed L1
-                # raise NotImplementedError("Grrrrr")
-            #
-            # TODO obtain mask via robust nerf method
-            # mask = None
 
         else:
             if self.config.model.dynamic_ray_sampling:
