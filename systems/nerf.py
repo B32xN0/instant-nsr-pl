@@ -191,7 +191,7 @@ class NeRFSystem(BaseSystem):
             with torch.no_grad():
                 # get the L2 errors for all occupied pixels (Euclidean of color differences)
                 # set the error to zero for all unoccupied pixels
-                # TODO check that probably we want squared, does not change anything but might introduce numerical instability due to the unneccssary root
+                # TODO applies an unnccessary sqrt, but we only use relative anyhow so does not hurt, still a bit ugly
                 pp_valid_error = torch.linalg.vector_norm(
                     out['comp_rgb'][out['rays_valid'][..., 0]] - batch['rgb'][out['rays_valid'][..., 0]],
                     dim=-1,
@@ -207,7 +207,7 @@ class NeRFSystem(BaseSystem):
                 # take the median as inlier threshold as mentioned in RonustNeRF
                 # only use the occupied pixels to compute the threshold (otherwise it would always be too low)
                 # use a higher threshold than median, otherwise RobustNeRF just fits the background
-                threshold = torch.quantile(pp_valid_error, q=0.8)
+                threshold = torch.quantile(pp_valid_error, q=0.8)  # for occ10, 0.8, for occ20 0.9 Nobody knows why.
 
                 # obtain inlier mask by applying the defined threshold
                 # lt OR EQUAL plus eps to make sure at least one occupied is selected in the end, minor change compared to robustnerf
